@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jenkins
+  namespace: default
+  labels:
+    app: jenkins
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Ensures only one Jenkins instance runs at a time
+  selector:
+    matchLabels:
+      app: jenkins
+  template:
+    metadata:
+      labels:
+        app: jenkins
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: jenkins
+          image: gcr.io/jenkins-cicd-dashboard/jenkins-dind:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: jnlp
+              containerPort: 50000
+              protocol: TCP
+          env:
+            - name: JAVA_OPTS
+              value: "-Xmx512m -Xms256m"  # Reduced memory for cost optimization
+          resources:
+            requests:
+              memory: "256Mi"  # Reduced for e2-micro compatibility
+              cpu: "100m"
+            limits:
+              memory: "1Gi"    # Reasonable limit for small nodes
+              cpu: "500m"
+          volumeMounts:
+            - name: jenkins-volume
+              mountPath: /var/jenkins_home
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 120  # Increased for slower nodes
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: jenkins-volume
+          persistentVolumeClaim:
+            claimName: jenkins-pvc
