@@ -38,7 +38,7 @@ gcloud services enable container.googleapis.com containerregistry.googleapis.com
 gcloud components install kubectl
 
 # Install the GKE auth plugin (prevents authentication errors)
-gcloud components install gke-gcloud-auth-plugin
+gcloud components install gke-gcloxud-auth-plugin
 ```
 
 #### 0.4 Set Environment Variable for Authentication
@@ -55,13 +55,11 @@ source ~/.bashrc
 ```
 
 #### 0.5 Grant Required Permissions
-```bash
-# Get your project ID
-PROJECT_ID=$(gcloud config get-value project)
+```pwsh
+$PROJECT_ID = gcloud config get-value project
 
-# Add Kubernetes Engine Admin role to your account
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="user:$(gcloud config get-value account)" \
+gcloud projects add-iam-policy-binding $PROJECT_ID `
+  --member="user:$(gcloud config get-value account)" `
   --role="roles/container.admin"
 ```
 
@@ -95,30 +93,24 @@ docker push gcr.io/your-project-id/my-jenkins-image:latest
 
 ### 2.1 Create the Cluster (Cost-Optimized)
 
-**💰 Cost-Optimized Configuration (Recommended for Development/Testing):**
+**💰 Configuration (Recommended for Production):**
 
 ```bash
 # Minimal cost cluster with preemptible nodes
 gcloud container clusters create jenkins-cluster \
   --zone asia-south1-a \
   --num-nodes 1 \
-  --machine-type e2-micro \
+  --machine-type e2-medium \
   --disk-size 20GB \
   --disk-type pd-standard \
-  --preemptible \
   --enable-autoscaling \
   --min-nodes 0 \
   --max-nodes 2 \
   --enable-autorepair
 ```
 
-**📊 Cost Breakdown:**
-- `e2-micro`: ~$3-5/month (cheapest option)
-- `preemptible`: 80% cost savings vs regular nodes
-- `min-nodes 0`: Scales down to 0 when not in use
-- `pd-standard`: Cheaper than SSD storage
 
-**🚀 Better Performance (Medium Cost):**
+**🚀 Medium Performance (Less Cost):**
 ```bash
 gcloud container clusters create jenkins-cluster \
   --zone asia-south1-a \
@@ -204,8 +196,12 @@ metadata:
     app: jenkins
 spec:
   replicas: 1
+  # Use RollingUpdate for zero-downtime updates
   strategy:
-    type: Recreate  # Ensures only one Jenkins instance runs at a time
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: jenkins
@@ -220,7 +216,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: jenkins
-          image: gcr.io/your-project-id/my-jenkins-image:latest
+          image: gcr.io/jenkins-cicd-dashboard/jenkins-dind:latest
           imagePullPolicy: Always
           ports:
             - name: http
@@ -230,14 +226,17 @@ spec:
               containerPort: 50000
               protocol: TCP
           env:
+            # Set the JAVA_OPTS to align with the container limits
             - name: JAVA_OPTS
-              value: "-Xmx512m -Xms256m"  # Reduced memory for cost optimization
+              value: "-Xmx512m -Xms256m"
           resources:
             requests:
-              memory: "256Mi"  # Reduced for e2-micro compatibility
+              # Ensure resource requests are realistic and match the JVM settings
+              memory: "512Mi"
               cpu: "100m"
             limits:
-              memory: "1Gi"    # Reasonable limit for small nodes
+              # Set a reasonable upper bound for memory to prevent OOMKills
+              memory: "768Mi"
               cpu: "500m"
           volumeMounts:
             - name: jenkins-volume
@@ -246,14 +245,16 @@ spec:
             httpGet:
               path: /login
               port: 8080
-            initialDelaySeconds: 120  # Increased for slower nodes
+            # Increase initial delay to give Jenkins more time to start up
+            initialDelaySeconds: 240
             periodSeconds: 30
             timeoutSeconds: 10
           readinessProbe:
             httpGet:
               path: /login
               port: 8080
-            initialDelaySeconds: 60
+            # Increase initial delay to give Jenkins more time to become ready
+            initialDelaySeconds: 180
             periodSeconds: 10
             timeoutSeconds: 5
       volumes:
@@ -275,9 +276,9 @@ kubectl apply -f jenkins-deployment.yaml
 
 ## Step 5: Expose Jenkins (Cost-Optimized Options)
 
-### Option A: LoadBalancer (Extra Cost but Easy Access)
+### LoadBalancer (Extra Cost but Easy Access)
 
-Create `jenkins-service-lb.yaml`:
+Create `jenkins-service.yaml`:
 
 ```yaml
 apiVersion: v1
@@ -301,54 +302,12 @@ spec:
 **💰 Cost:** ~$5-10/month for the LoadBalancer
 
 ```bash
-kubectl apply -f jenkins-service-lb.yaml
+kubectl apply -f jenkins-service.yaml
 ```
-
-### Option B: NodePort (FREE but Less Convenient)
-
-Create `jenkins-service-np.yaml`:
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: jenkins-service
-  namespace: default
-  labels:
-    app: jenkins
-spec:
-  type: NodePort
-  ports:
-    - name: http
-      protocol: TCP
-      port: 8080
-      targetPort: 8080
-      nodePort: 30080  # Access via node-ip:30080
-  selector:
-    app: jenkins
-```
-
-**💰 Cost:** FREE
-
-```bash
-kubectl apply -f jenkins-service-np.yaml
-```
-
-### Option C: Port Forwarding (FREE for Development)
-
-No service file needed. Just run:
-
-```bash
-kubectl port-forward deployment/jenkins 8080:8080
-```
-
-Access Jenkins at `http://localhost:8080`
-
-**💰 Cost:** FREE but only works while command is running
 
 ## Step 6: Access Your Jenkins Instance
 
-### For LoadBalancer (Option A):
+### LoadBalancer:
 
 Monitor the service until an external IP is assigned:
 
@@ -357,19 +316,6 @@ kubectl get service jenkins-service --watch
 ```
 
 Once the `EXTERNAL-IP` field shows an IP address, access Jenkins at `http://<EXTERNAL-IP>`
-
-### For NodePort (Option B):
-
-Get the node's external IP:
-```bash
-kubectl get nodes -o wide
-```
-
-Access Jenkins at `http://<NODE-EXTERNAL-IP>:30080`
-
-### For Port Forwarding (Option C):
-
-Access Jenkins at `http://localhost:8080` while the port-forward command is running.
 
 ### Get Initial Admin Password
 
